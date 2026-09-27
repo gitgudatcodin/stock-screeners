@@ -113,6 +113,45 @@ def screen_profitable_value(ym, uni, top_n):
     cands.sort(key=lambda r: r["score"])
     return [r["sym"] for r in cands[:top_n]]
 
+def screen_composite(ym, uni, top_n):
+    """All-rounder: rank on value (B/M, E/P, FCF yield), quality (GP/A),
+    momentum (12-1) and growth (TTM rev growth); ex-financials; profitable + FCF>0."""
+    load()
+    cands = []
+    for sym, u in uni.items():
+        if u["sector"] == "Financials":
+            continue
+        c = _close(sym, ym)
+        sh, book = _f(sym, "sh", ym), _f(sym, "book", ym)
+        ni, fcf = _f(sym, "ni", ym), _f(sym, "fcf", ym)
+        gpa = _f(sym, "gpa", ym)
+        rg = _f(sym, "rg", ym)
+        i = _pxm.get(sym, {}).get(ym)
+        mom = None
+        if i is not None and i >= 13:
+            cc = _price["symbols"][sym]["c"]
+            if cc[i - 1] and cc[i - 13]:
+                mom = cc[i - 1] / cc[i - 13] - 1
+        if not c or not sh or not book or book <= 0:
+            continue
+        if not ni or ni <= 0 or not fcf or fcf <= 0:
+            continue
+        if not gpa or gpa <= 0:
+            continue
+        if rg is None or mom is None:
+            continue
+        mcap = c * sh
+        cands.append({"sym": sym, "bm": book / mcap, "ep": ni / mcap,
+                      "fcfy": fcf / mcap, "gpa": gpa, "mom": mom, "rg": rg})
+    for key in ("bm", "ep", "fcfy", "gpa", "mom", "rg"):
+        for i, r in enumerate(sorted(cands, key=lambda r: r[key], reverse=True)):
+            r[key + "_rank"] = i + 1
+    for r in cands:
+        r["score"] = ((r["bm_rank"] + r["ep_rank"] + r["fcfy_rank"]) / 3
+                      + r["gpa_rank"] + r["mom_rank"] + r["rg_rank"])
+    cands.sort(key=lambda r: r["score"])
+    return [r["sym"] for r in cands[:top_n]]
+
 def _lev_ok(sym, ym):
     load()
     lev, fcf = _f(sym, "lev", ym), _f(sym, "fcf", ym)
@@ -166,6 +205,7 @@ SCREENS = {
     "💰 Gross Profitability": (screen_profitability, "annual", 100),
     "🚀 Momentum": (screen_momentum, "monthly", 100),
     "⚖️ Profitable Value": (screen_profitable_value, "annual", 30),
+    "🎯 Composite": (screen_composite, "monthly", 30),
 }
 
 # ---------------- simulator ----------------

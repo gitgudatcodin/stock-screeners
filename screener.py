@@ -389,3 +389,57 @@ def run_profitable_value(prices, funds, uni, params=None):
         r["score"] = round(r["combined"], 1)
     cands.sort(key=lambda r: r["combined"])
     return cands[:p["top_n"]], len(cands)
+
+# ---------------- composite (all-rounder) ----------------
+
+def run_composite(prices, funds, uni, params=None):
+    """Stocks that rank well on ALL the factor screens at once:
+    value (B/M, E/P, FCF yield), quality (GP/assets), momentum (12-1),
+    growth (TTM revenue growth). Ex-financials; must be profitable with positive FCF."""
+    p = {"top_n": 30}
+    p.update(params or {})
+    cands = []
+    for sym, f in funds.items():
+        if sym not in prices or "error" in f:
+            continue
+        if uni[sym]["sector"] == "Financials":
+            continue
+        pr = prices[sym]
+        gp, ta = f.get("ttm_gross_profit"), f.get("total_assets")
+        lev = f.get("leverage")
+        eps, fcf = f.get("ttm_eps"), f.get("ttm_fcf")
+        ni = f.get("ttm_net_income")
+        mom = pr.get("mom_12_1")
+        g = f.get("ttm_rev_growth")
+        if not gp or not ta or gp <= 0 or ta <= 0:
+            continue
+        if lev is None:
+            continue
+        mcap = _mcap(pr, f)
+        if not mcap or mcap <= 0:
+            continue
+        book = ta * (1 - lev)
+        if book <= 0:
+            continue
+        if not eps or eps <= 0 or not fcf or fcf <= 0:
+            continue
+        if not ni or ni <= 0:
+            continue
+        if mom is None or g is None:
+            continue
+        cands.append({
+            "symbol": sym, "name": uni[sym]["name"], "sector": uni[sym]["sector"],
+            "price": pr["price"], "mcap_bn": round(mcap / 1e9, 2),
+            "bm": round(book / mcap, 4), "ep": round(eps / pr["price"], 4),
+            "fcfy": round(fcf / mcap, 4), "gp_a": round(gp / ta, 4),
+            "mom_12_1": round(mom, 4), "ttm_rev_growth": round(g, 4),
+        })
+    for key in ("bm", "ep", "fcfy", "gp_a", "mom_12_1", "ttm_rev_growth"):
+        for i, r in enumerate(sorted(cands, key=lambda r: r[key], reverse=True)):
+            r[key + "_rank"] = i + 1
+    for r in cands:
+        r["value_rank"] = round((r["bm_rank"] + r["ep_rank"] + r["fcfy_rank"]) / 3, 1)
+        r["combined"] = r["value_rank"] + r["gp_a_rank"] + r["mom_12_1_rank"] + r["ttm_rev_growth_rank"]
+        r["score"] = round(r["combined"], 1)
+    cands.sort(key=lambda r: r["combined"])
+    return cands[:p["top_n"]], len(cands)

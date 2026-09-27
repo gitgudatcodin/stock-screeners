@@ -1,4 +1,4 @@
-"""Five-strategy stock screener — Streamlit app. No API keys needed.
+"""Six-strategy stock screener — Streamlit app. No API keys needed.
 Run: pip install -r requirements.txt && streamlit run app.py
 """
 import json, os
@@ -7,13 +7,17 @@ import streamlit as st
 
 from screener import (fetch_prices, fetch_fundamentals, run_screen,
                       run_fallen_quality, run_profitability, run_momentum,
-                      run_profitable_value, DEFAULT_PARAMS, FQ_DEFAULTS)
+                      run_profitable_value, run_composite,
+                      DEFAULT_PARAMS, FQ_DEFAULTS)
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 CACHE_PATH = os.path.join(APP_DIR, "fundamentals_cache.json")
 VERDICT_EMOJI = {"CLEAR": "🟢", "CAUTION": "🟡", "REJECT": "🔴", "UNREVIEWED": "⚪"}
 
-uni = {u["symbol"]: u for u in json.load(open(os.path.join(APP_DIR, "sp500.json")))}
+UNIVERSES = {"S&P 500": "sp500.json", "S&P 1500": "sp1500.json"}
+
+def load_uni(name):
+    return {u["symbol"]: u for u in json.load(open(os.path.join(APP_DIR, UNIVERSES[name])))}
 
 def _verdict(df):
     df["verdict"] = df["news_verdict"].map(lambda v: f"{VERDICT_EMOJI.get(v, '')} {v}")
@@ -88,6 +92,18 @@ def _pv_frame(rows):
                "value_rank", "gp_a_rank", "combined", "score"]].rename(
         columns={"gp_a_rank": "quality_rank"})
 
+def _composite_params():
+    top_n = st.slider("Portfolio size", 10, 50, 30, 5)
+    return {"top_n": top_n}
+
+def _composite_frame(rows):
+    df = _verdict(pd.DataFrame(rows))
+    return df[["verdict", "symbol", "name", "sector", "price", "mcap_bn",
+               "value_rank", "gp_a_rank", "mom_12_1_rank", "ttm_rev_growth_rank",
+               "combined", "score"]].rename(
+        columns={"gp_a_rank": "quality_rank", "mom_12_1_rank": "momentum_rank",
+                 "ttm_rev_growth_rank": "growth_rank"})
+
 def _detail_growth(w):
     gm = w.get("ttm_gross_margin")
     return (f"Price ${w['price']} | 52w high ${w['high52w']} | "
@@ -104,6 +120,7 @@ def _detail_simple(w):
 STRATEGIES = {
     "🌱 Undiscovered Growth": {
         "sample": "sample_results.json",
+        "sample1500": "sample_1500_results.json",
         "blurb": "Strong growers the market hasn't noticed yet — SEC fundamentals + price position.",
         "run": run_screen, "params": _growth_params, "frame": _growth_frame, "detail": _detail_growth,
         "how": """**Undiscovered Growth** — great growth that hasn't caught attention or shot up yet:
@@ -115,6 +132,7 @@ Score = growth × size discount × distance-from-high.""",
     },
     "📉 Fallen Quality": {
         "sample": "sample_fq_results.json",
+        "sample1500": "sample_1500_fq_results.json",
         "blurb": "Quality stocks with large price declines but no fundamental change.",
         "run": run_fallen_quality, "params": _fq_params, "frame": _growth_frame, "detail": _detail_growth,
         "how": """**Fallen Quality** — quality stocks with large price declines but no fundamental change:
@@ -125,31 +143,48 @@ Score = drawdown × (1 + revenue growth).""",
     },
     "💰 Gross Profitability": {
         "sample": "sample_profit_results.json",
+        "sample1500": "sample_1500_profit_results.json",
         "blurb": "Novy-Marx (2013): the most profitable companies keep winning — gross profit ÷ total assets.",
         "run": run_profitability, "params": _profit_params, "frame": _profit_frame, "detail": _detail_simple,
         "how": """**Gross Profitability** (Novy-Marx, 2013, "The Other Side of Value"):
-Rank the S&P 500 by **gross profit ÷ total assets**, buy the top ~100 equal-weight, rebalance annually.
+Rank the universe by **gross profit ÷ total assets**, buy the top ~100 equal-weight, rebalance annually.
 Gross profitability predicts returns about as well as value does — and it works specifically among large caps.
 Low turnover, defensive in stress. Paper: [Novy-Marx 2013](http://users.nber.org/~confer/2010/APf10/Novy-Marx.pdf)""",
     },
     "🚀 Momentum": {
         "sample": "sample_mom_results.json",
+        "sample1500": "sample_1500_mom_results.json",
         "blurb": "Jegadeesh-Titman (1993): buy the past 12-month winners (skipping the last month).",
         "run": run_momentum, "params": _mom_params, "frame": _mom_frame, "detail": _detail_simple,
         "how": """**Momentum** (Jegadeesh & Titman, 1993):
-Rank the S&P 500 by 12-month return **skipping the most recent month**, buy the top ~100 equal-weight, rebalance monthly.
+Rank the universe by 12-month return **skipping the most recent month**, buy the top ~100 equal-weight, rebalance monthly.
 The most replicated anomaly in finance — but it crashes hard on occasion (2009), so size it knowing that.
 Paper: [Jegadeesh & Titman 1993](https://smallake.kr/wp-content/uploads/2015/01/Jegadeesh_Titman_1993.pdf)""",
     },
     "⚖️ Profitable Value": {
         "sample": "sample_pv_results.json",
+        "sample1500": "sample_1500_pv_results.json",
         "blurb": "Magic-Formula style: cheapest stocks among the profitable — value rank + quality rank.",
         "run": run_profitable_value, "params": _pv_params, "frame": _pv_frame, "detail": _detail_simple,
         "how": """**Profitable Value** (Greenblatt's Magic Formula idea + Fama-French 5-factor):
-S&P 500 ex-financials. **Value rank** = average rank of book/market, earnings/price, and free-cash-flow yield.
+the universe ex-financials. **Value rank** = average rank of book/market, earnings/price, and free-cash-flow yield.
 **Quality rank** = rank of gross profit ÷ assets. Buy the 30 lowest **combined rank**, equal-weight, rebalance annually.
 Value alone has struggled since 2007 — pairing it with profitability fixes much of that, and the two diversify each other.
 Book: Greenblatt (2005), *The Little Book That Beats the Market*; paper: [Fama-French 2015](https://tevgeniou.github.io/EquityRiskFactors/bibliography/FiveFactor.pdf)""",
+    },
+    "🎯 Composite": {
+        "sample": "sample_composite_results.json",
+        "sample1500": "sample_1500_composite_results.json",
+        "blurb": "All-rounder: stocks that rank well on value, quality, momentum AND growth at once.",
+        "run": run_composite, "params": _composite_params, "frame": _composite_frame, "detail": _detail_simple,
+        "how": """**Composite (all-rounder)** — your intuition, formalized: a stock that is simultaneously cheap, profitable, winning, and growing is a better bet than one that only screens well on a single factor. The four factor families are also negatively correlated with each other, so the combination diversifies.
+the universe ex-financials, must have positive earnings and positive free cash flow:
+1. **Value rank** = average rank of book/market, earnings/price, FCF yield.
+2. **Quality rank** = rank of gross profit ÷ total assets (Novy-Marx).
+3. **Momentum rank** = rank of 12-month return skipping the last month (Jegadeesh-Titman).
+4. **Growth rank** = rank of TTM revenue growth.
+Buy the 30 lowest **combined rank** (value + quality + momentum + growth), equal-weight.
+Trade-off: combining filters shrinks the candidate pool, so it can concentrate in whatever style is currently working — check the Backtest tab.""",
     },
 }
 
@@ -158,10 +193,18 @@ Book: Greenblatt (2005), *The Little Book That Beats the Market*; paper: [Fama-F
 st.set_page_config(page_title="Stock Screeners", layout="wide")
 st.title("Stock Screeners")
 strategy = st.segmented_control("Strategy", list(STRATEGIES.keys()), default="🌱 Undiscovered Growth")
+if strategy not in STRATEGIES:
+    strategy = "🌱 Undiscovered Growth"
+universe_name = st.segmented_control("Universe", list(UNIVERSES.keys()), default="S&P 500",
+                                     help="S&P 1500 = S&P 500 + 400 midcap + 600 smallcap — more undiscovered names, slower screens.")
+if universe_name not in UNIVERSES:
+    universe_name = "S&P 500"
+uni = load_uni(universe_name)
 cfg = STRATEGIES[strategy]
-st.caption(cfg["blurb"] + " Research screen, not investment advice.")
+st.caption(cfg["blurb"] + f" Universe: {universe_name} ({len(uni)} stocks). Research screen, not investment advice.")
 
-sample_path = os.path.join(APP_DIR, cfg["sample"])
+sample_key = "sample" if universe_name == "S&P 500" else "sample1500"
+sample_path = os.path.join(APP_DIR, cfg[sample_key])
 sample = json.load(open(sample_path)) if os.path.exists(sample_path) else None
 
 tab_watch, tab_run, tab_backtest, tab_miss, tab_how = st.tabs(
@@ -169,7 +212,7 @@ tab_watch, tab_run, tab_backtest, tab_miss, tab_how = st.tabs(
 
 with tab_watch:
     if sample is None:
-        st.info("No reviewed run saved for this strategy yet — run a fresh screen instead.")
+        st.info(f"No saved run for {strategy} on the {universe_name} yet — run a fresh screen instead.")
     else:
         st.subheader(f"Watchlist — run of {sample['run_date']} ({len(sample['watchlist'])} names)")
         st.dataframe(cfg["frame"](sample["watchlist"]), use_container_width=True, hide_index=True)
@@ -182,11 +225,13 @@ with tab_watch:
 
 with tab_run:
     st.subheader("Run a fresh screen")
-    st.write("Pulls ~1 year of prices (Yahoo) and TTM fundamentals (SEC EDGAR) for the S&P 500. "
-             "Fundamentals are cached on disk, so re-runs are fast. First run takes ~10 minutes.")
+    n_uni = len(uni)
+    st.write(f"Pulls ~1 year of prices (Yahoo) and TTM fundamentals (SEC EDGAR) for the {universe_name} "
+             f"({n_uni} stocks). Fundamentals are cached on disk, so re-runs are fast. "
+             f"First run takes ~{10 if universe_name == 'S&P 500' else 30} minutes.")
     run_params = cfg["params"]()
     if st.button("Run screen", type="primary"):
-        sp = json.load(open(os.path.join(APP_DIR, "sp500.json")))
+        sp = json.load(open(os.path.join(APP_DIR, UNIVERSES[universe_name])))
         symbols = [u["symbol"] for u in sp]
         cik_of = {u["symbol"]: u["cik"] for u in sp}
         prog = st.progress(0.0, "Fetching prices…")
@@ -245,7 +290,7 @@ with tab_backtest:
                 st.bar_chart(ydf)
                 st.dataframe(ydf.style.format("{:.1%}"), use_container_width=True)
                 st.caption(f"{res['n_months']} months, {len(res['last_holdings'])} holdings at last rebalance. "
-                           "Current S&P 500 constituents only (survivorship bias flatters results). "
+                           f"Current {universe_name} constituents only (survivorship bias flatters results). "
                            "Monthly granularity, no transaction costs or taxes. Research, not advice.")
 
 with tab_miss:
@@ -258,4 +303,4 @@ with tab_miss:
 
 with tab_how:
     st.markdown(cfg["how"])
-    st.caption("All five are research screens, not investment advice.")
+    st.caption("All six are research screens, not investment advice.")
