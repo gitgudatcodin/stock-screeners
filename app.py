@@ -215,7 +215,7 @@ with tab_watch:
         st.info(f"No saved run for {strategy} on the {universe_name} yet — run a fresh screen instead.")
     else:
         st.subheader(f"Watchlist — run of {sample['run_date']} ({len(sample['watchlist'])} names)")
-        st.dataframe(cfg["frame"](sample["watchlist"]), use_container_width=True, hide_index=True)
+        st.dataframe(cfg["frame"](sample["watchlist"]), width="stretch", hide_index=True)
         st.divider()
         for w in sample["watchlist"]:
             with st.expander(f"{VERDICT_EMOJI.get(w.get('news_verdict'), '')} {w['symbol']} — {w['name']}"):
@@ -246,13 +246,18 @@ with tab_run:
         prog.progress(1.0, "Done")
         st.success(f"{screened} names passed the filters — top {len(top)} shown (news verdicts: unreviewed on fresh runs).")
         df = cfg["frame"]([{"news_verdict": "UNREVIEWED", **r} for r in top])
-        st.dataframe(df, use_container_width=True, hide_index=True)
+        st.dataframe(df, width="stretch", hide_index=True)
         st.download_button("Download CSV", df.to_csv(index=False), "screen_results.csv", "text/csv")
 
 with tab_backtest:
     st.subheader(f"Backtest — {strategy}")
     st.write("Point-in-time monthly backtest on bundled history (2017→2026): month-end prices, "
              "fundamentals as actually filed by each rebalance date. Equal weight, long only, no costs.")
+    st.caption("Method notes: Sharpe uses a 0% risk-free rate. Months with no eligible holdings are "
+               "scored as cash (0%). Annual strategies form each June and start earning the next month. "
+               "Fundamental history is built from SEC EDGAR by an automated pipeline; known assembler "
+               "artifacts and impossible values were nulled (see data_fund_v2_repair_manifest.json), "
+               "but the history has not been name-by-name verified — treat results as research, not a buy list.")
     try:
         import backtest as bt
         has_data = os.path.exists(os.path.join(APP_DIR, "data_price.json")) and \
@@ -288,7 +293,7 @@ with tab_backtest:
                 st.subheader("Yearly returns")
                 ydf = pd.DataFrame(res["yearly"]).T.rename(columns={"strat": "Strategy", "spy": "SPY"})
                 st.bar_chart(ydf)
-                st.dataframe(ydf.style.format("{:.1%}"), use_container_width=True)
+                st.dataframe(ydf.style.format("{:.1%}"), width="stretch")
                 st.caption(f"{res['n_months']} months, {len(res['last_holdings'])} holdings at last rebalance. "
                            f"Current {universe_name} constituents only (survivorship bias flatters results). "
                            "Monthly granularity, no transaction costs or taxes. Research, not advice.")

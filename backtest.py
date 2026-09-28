@@ -1,9 +1,13 @@
-"""Point-in-time monthly backtests for the five strategies.
+"""Point-in-time monthly backtests for the six strategies.
 Data (precomputed, bundled with the app):
   data_price.json   - monthly adjusted closes, 52w high, 60d change (Yahoo)
   data_fund_v2.json - monthly point-in-time fundamentals (SEC EDGAR, filed-date honest)
 Caveats shown in the UI: current S&P 500 constituents only (survivorship bias),
 monthly granularity, no transaction costs, equal weight, long only.
+Methodology notes: Sharpe ratios assume a 0% risk-free rate. Months with no
+eligible holdings are scored as cash (0%). Annual strategies (June formation)
+start only after their first June portfolio is formed - the pre-formation
+months are excluded from both the strategy and the SPY benchmark series.
 """
 import json, math, os
 
@@ -225,10 +229,17 @@ def run_backtest(strategy, uni, start_ym="2017-01", top_n=None):
     holdings = []
     strat_rets, spy_rets, labels = [], [], []
     prev_hold = []
+    formed = False  # no returns recorded before the first portfolio exists
     for k, ym in enumerate(months):
         if _is_rebalance(ym, freq, months):
             holdings = screen(ym, uni, top_n)
-        if k == 0:
+            if not formed:
+                # first portfolio just formed at end of this month; it starts
+                # earning next month, so skip recording a return for this month
+                formed = True
+                prev_hold = holdings
+                continue
+        if k == 0 or not formed:
             prev_hold = holdings
             continue
         pm = months[k - 1]
@@ -267,7 +278,7 @@ def _metrics(labels, sr, br, last_holdings):
             return None
         mu = sum(rets) / len(rets)
         var = sum((r - mu) ** 2 for r in rets) / len(rets)
-        return (mu / math.sqrt(var) * math.sqrt(12)) if var > 0 else None
+        return (mu / math.sqrt(var) * math.sqrt(12)) if var > 1e-12 else None
     def maxdd(curve_):
         peak, md = curve_[0], 0.0
         for c in curve_:
